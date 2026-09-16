@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SLIPPERY</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">SLIPPERY</span>
+      <a href="#" class="btn-play">PLAY</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="game-wrapper">
+      <canvas id="gameCanvas"></canvas>
+      <div class="hud">
+        <span class="hud-score">SCORE 0</span>
+        <span class="hud-time">TIME 0.0</span>
+      </div>
+      <div class="game-over-screen" id="gameOverScreen">
+        <div class="game-over-title">SLIPPED.</div>
+        <div class="game-over-score" id="goScore">SCORE 0</div>
+        <div class="game-over-time" id="goTime">TIME 0.0</div>
+        <div class="game-over-restart">PRESS SPACE TO TRY AGAIN</div>
+      </div>
+    </div>
+  </main>
+
+  <p class="tagline">SLIPPERY<br>*A tiny physics game.*</p>
+
+  <footer>
+    <span>SLIPPERY — A tiny browser game</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
