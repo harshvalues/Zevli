@@ -39,13 +39,13 @@ function loadSpeed() {
 let currentSpeed = loadSpeed();
 let isNewBest = false;
 
-// ---- BOX DIFFICULTY (count + size flip: easy = few BIG boxes,
-// extreme = MANY SMALL boxes) ----
+// ---- BOX DIFFICULTY: 1 big box on easy, 2 medium (rect + square),
+// 3 small on high, 4 small on extreme — playable, corridors open ----
 const DIFFICULTY = {
-  easy:    { label: 'EASY',    count: 2, size: 1.3 },
-  medium:  { label: 'MEDIUM',  count: 4, size: 1.0 },
-  high:    { label: 'HIGH',    count: 6, size: 0.85 },
-  extreme: { label: 'EXTREME', count: 12, size: 0.7 }
+  easy:    { label: 'EASY',    count: 1, size: 1.5,  gap: 60, shapes: ['E'] },
+  medium:  { label: 'MEDIUM',  count: 2, size: 1.05, gap: 55, shapes: ['D', 'E'] },
+  high:    { label: 'HIGH',    count: 3, size: 0.85, gap: 48, shapes: ['D', 'E'] },
+  extreme: { label: 'EXTREME', count: 4, size: 0.7,  gap: 42, shapes: ['D', 'E'] }
 };
 const DIFF_KEY = 'zevli:difficulty';
 
@@ -375,11 +375,15 @@ function syncArenaToCanvas() {
     h: canvasSize - margin * 2
   };
   const b = arena.bounds;
-  // Drop obstacles that no longer fit (happens on window shrink)
+  // Clamp obstacles back inside on window shrink (instead of deleting
+  // them, which thinned higher difficulties down to ~1 box).
   if (arena.obstacles) {
-    arena.obstacles = arena.obstacles.filter(
-      (o) => o.x >= b.x && o.y >= b.y && o.x + o.w <= b.x + b.w && o.y + o.h <= b.y + b.h
-    );
+    for (const o of arena.obstacles) {
+      o.w = Math.min(o.w, Math.max(8, b.w - 8));
+      o.h = Math.min(o.h, Math.max(8, b.h - 8));
+      o.x = Math.max(b.x + 4, Math.min(o.x, b.x + b.w - o.w - 4));
+      o.y = Math.max(b.y + 4, Math.min(o.y, b.y + b.h - o.h - 4));
+    }
     obstacles = arena.obstacles;
   }
   // Keep player inside the newly-sized arena
@@ -479,30 +483,31 @@ function dropBlockersNear(x, y, minClear) {
   }
 }
 
-function generateArena() {
-  const type = pickArenaType();
-  const margin = 40;
-  const bounds = {
-    x: margin,
-    y: margin,
-    w: canvasSize - margin * 2,
-    h: canvasSize - margin * 2
-  };
-
-  const obs = [];
-  const minGap = 50;
+function topUpObstacles(targetCount, excludes) {
+  // Safety clearing above only removes true overlaps, but with exact
+  // counts (easy = 1 box) even one removal breaks the spec — so re-add
+  // whatever was deleted, keeping clear of spawn/ring bubbles.
+  if (!arena || !arena.obstacles || arena.obstacles.length >= targetCount) return;
   const diff = DIFFICULTY[currentDifficulty];
-  let count = diff.count;
-  const sizeScale = diff.size;
-
-  // Tiny arenas can't fit many separated blocks — shrink the budget
-  // so placement always terminates (never freeze the page).
-  const room = Math.min(bounds.w, bounds.h);
-  if (room < 150) count = 0;
-  else if (room < 240) count = Math.min(count, 2);
-
-  for (let i = 0; i < count; i++) {
-    const shape = pickArenaType();
+  const b = arena.bounds;
+  let sizeScale = diff.size;
+  const room = Math.min(b.w, b.h);
+  if (room < 320) sizeScale *= Math.max(0.45, room / 320);
+  const baseGap = (typeof diff.gap === 'number') ? diff.gap : 50;
+  const tinyK = room < 320 ? Math.max(0.55, room / 320) : 1;
+  const minGap = Math.max(34 * tinyK, baseGap * Math.max(0.6, Math.min(1, room / 600)));
+  const pool = (Array.isArray(diff.shapes) && diff.shapes.length > 0) ? diff.shapes : ['A', 'B', 'C', 'D', 'E'];
+  const floor = Math.max(28 * tinyK, minGap * 0.7);
+  let guard = 0;
+  while (arena.obstacles.length < targetCount && guard++ < targetCount) {
+    // Prefer the pool shape with fewest boxes so medium stays 1 rect + 1 square.
+    const counts = {};
+    for (const o of arena.obstacles) counts[o.s] = (counts[o.s] || 0) + 1;
+    let shape = pool[0], fewest = Infinity;
+    for (const s of pool) {
+      const c = counts[s] || 0;
+      if (c < fewest) { fewest = c; shape = s; }
+    }
     let w, h;
     if (shape === 'D') {
       w = randomRange(40, 120) * sizeScale;
@@ -514,30 +519,119 @@ function generateArena() {
       w = randomRange(30, 100) * sizeScale;
       h = randomRange(30, 100) * sizeScale;
     }
-    w = Math.round(w);
-    h = Math.round(h);
-    w = Math.min(w, bounds.w - 40);
-    h = Math.min(h, bounds.h - 40);
+    w = Math.max(8, Math.round(w));
+    h = Math.max(8, Math.round(h));
+    w = Math.min(w, Math.max(8, b.w - 40));
+    h = Math.min(h, Math.max(8, b.h - 40));
+    if (w < 8 || h < 8) break;
+    for (let a = 0; a < 120; a++) {
+      const g = a < 70 ? minGap : floor;
+      const x = safeRange(b.x + 20, b.x + b.w - w - 20);
+      const y = safeRange(b.y + 20, b.y + b.h - h - 20);
+      if (x === null || y === null) break;
+      let ok = true;
+      for (const o of arena.obstacles) {
+        const dx = Math.abs((x + w / 2) - (o.x + o.w / 2));
+        const dy = Math.abs((y + h / 2) - (o.y + o.h / 2));
+        if (dx < (o.w / 2 + w / 2) + g && dy < (o.h / 2 + h / 2) + g) { ok = false; break; }
+      }
+      if (ok && Array.isArray(excludes)) {
+        for (const e of excludes) {
+          const cx = Math.max(x, Math.min(e.x, x + w));
+          const cy = Math.max(y, Math.min(e.y, y + h));
+          if (Math.hypot(e.x - cx, e.y - cy) < e.r) { ok = false; break; }
+        }
+      }
+      if (ok) { arena.obstacles.push({ x, y, w, h, s: shape }); break; }
+    }
+    // NOTE: if a shape won't fit anywhere after 120 tries the loop ends
+    // via the guard — a missing box beats a forced unfair one.
+  }
+  obstacles = arena.obstacles;
+}
+
+function generateArena() {
+  const type = pickArenaType();
+  const margin = 40;
+  const bounds = {
+    x: margin,
+    y: margin,
+    w: canvasSize - margin * 2,
+    h: canvasSize - margin * 2
+  };
+
+  const obs = [];
+  const diff = DIFFICULTY[currentDifficulty];
+  const count = diff.count;
+  let sizeScale = diff.size;
+
+  const room = Math.min(bounds.w, bounds.h);
+  // Shrink boxes (not the count) on small screens so the requested
+  // number of boxes can still fit. Tiny phone arenas get mini boxes.
+  if (room < 320) sizeScale *= Math.max(0.45, room / 320);
+  // Gap scales with difficulty AND arena size, but never below a
+  // playable corridor (~player diameter + margin) so runs stay fair.
+  // On tiny screens gaps shrink proportionally with the boxes.
+  const tinyK = room < 320 ? Math.max(0.55, room / 320) : 1;
+  const baseGap = (typeof diff.gap === 'number') ? diff.gap : 50;
+  const minGap = Math.max(34 * tinyK, baseGap * Math.max(0.6, Math.min(1, room / 600)));
+  // Cap total box coverage so many small boxes can't pave the arena.
+  const maxCover = bounds.w * bounds.h * 0.22;
+  let cover = 0;
+
+  // Per-difficulty shape pool: E = square, D = rectangle bar.
+  // Shuffled then cycled, so medium (D,E) always gives 1 rect + 1 square.
+  const pool = (Array.isArray(diff.shapes) && diff.shapes.length > 0) ? diff.shapes : ['A', 'B', 'C', 'D', 'E'];
+  const order = [...pool].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < count; i++) {
+    const shape = order[i % order.length];
+    let w, h;
+    if (shape === 'D') {
+      w = randomRange(40, 120) * sizeScale;
+      h = randomRange(8, 20) * sizeScale;
+    } else if (shape === 'E') {
+      w = randomRange(30, 80) * sizeScale;
+      h = randomRange(30, 80) * sizeScale;
+    } else {
+      w = randomRange(30, 100) * sizeScale;
+      h = randomRange(30, 100) * sizeScale;
+    }
+    // Clamp to the 8px minimum instead of discarding: a rolled 6px bar
+    // becomes an 8px bar, so small difficulties keep their exact count.
+    w = Math.max(8, Math.round(w));
+    h = Math.max(8, Math.round(h));
+    w = Math.min(w, Math.max(8, bounds.w - 40));
+    h = Math.min(h, Math.max(8, bounds.h - 40));
     if (w < 8 || h < 8) continue;
 
-    // Bounded attempts: skip this block if it won't fit apart. Never i-- loop.
-    for (let attempt = 0; attempt < 40; attempt++) {
+    // Skip boxes that would overfill the arena — fewer fair boxes
+    // beats many impossible ones. Never i-- loop.
+    const area = w * h;
+    if (cover + area > maxCover) continue;
+    // Bounded attempts with mildly relaxed spacing. The floor stays
+    // playable (never packs boxes skin-to-skin); a box that won't fit
+    // with room to dodge is skipped instead of forced in.
+    const relaxFloor = Math.max(28 * tinyK, minGap * 0.7);
+    let placed = false;
+    for (let attempt = 0; attempt < 120 && !placed; attempt++) {
+      const effGap = attempt < 70 ? minGap : relaxFloor;
       const x = safeRange(bounds.x + 20, bounds.x + bounds.w - w - 20);
       const y = safeRange(bounds.y + 20, bounds.y + bounds.h - h - 20);
       if (x === null || y === null) break;
 
       let valid = true;
       for (const o of obs) {
-        const dx = Math.abs(x - (o.x + o.w / 2));
-        const dy = Math.abs(y - (o.y + o.h / 2));
-        if (dx < (o.w / 2 + w / 2) + minGap && dy < (o.h / 2 + h / 2) + minGap) {
+        const dx = Math.abs((x + w / 2) - (o.x + o.w / 2));
+        const dy = Math.abs((y + h / 2) - (o.y + o.h / 2));
+        if (dx < (o.w / 2 + w / 2) + effGap && dy < (o.h / 2 + h / 2) + effGap) {
           valid = false;
           break;
         }
       }
       if (valid) {
-        obs.push({ x, y, w, h });
-        break;
+        obs.push({ x, y, w, h, s: shape });
+        cover += w * h;
+        placed = true;
       }
     }
   }
@@ -547,7 +641,7 @@ function generateArena() {
 
 function generatePlayerSpawn() {
   const m = arena.bounds;
-  const need = 40 + physics.playerRadius;
+  const need = 60 + physics.playerRadius;
   const pad = 4 + physics.playerRadius;
   // Best-of-N by clearance, validated AFTER clamping — spawn is never
   // accepted inside (or a death away from) a square. Always terminates.
@@ -568,7 +662,7 @@ function generatePlayerSpawn() {
 
 function generateTarget() {
   const m = arena.bounds;
-  const needObs = 30 + physics.targetRadius;
+  const needObs = 42 + physics.targetRadius;
   const pad = 4 + physics.targetRadius;
   // Scale the away-from-player rule to arena size: a fixed 100px starved
   // small arenas so rings only ever appeared on the far side. Rings now
@@ -765,9 +859,18 @@ function setupWorld() {
   arena = generateArena();
   const spawn = generatePlayerSpawn();
   player = { x: spawn.x, y: spawn.y, vx: 0, vy: 0, radius: physics.playerRadius };
-  dropBlockersNear(player.x, player.y, 24);
+  // Overlap-only clearing (spawn seeks 74px open space already, so this
+  // almost never fires) + top-up restores the exact spec count:
+  // easy 1, medium 2, high 3, extreme 4 — never 0.
+  const want = DIFFICULTY[currentDifficulty].count;
+  dropBlockersNear(player.x, player.y, physics.playerRadius + 4);
+  topUpObstacles(want, [{ x: player.x, y: player.y, r: physics.playerRadius + 10 }]);
   target = generateTarget();
-  dropBlockersNear(target.x, target.y, physics.playerRadius + physics.targetRadius + 4);
+  dropBlockersNear(target.x, target.y, physics.targetRadius + 4);
+  topUpObstacles(want, [
+    { x: player.x, y: player.y, r: physics.playerRadius + 10 },
+    { x: target.x, y: target.y, r: physics.playerRadius + physics.targetRadius + 6 }
+  ]);
   obstacles = arena.obstacles;
   running = true;
   updateHUD();
