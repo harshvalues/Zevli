@@ -149,7 +149,10 @@ header {
 .joystick {
   display: none;
   justify-content: center;
-  padding: 10px 0 2px;
+  padding: 40px 40px;
+  margin: -30px 0;
+  position: relative;
+  touch-action: none;
 }
 
 body.is-touch .joystick {
@@ -157,28 +160,49 @@ body.is-touch .joystick {
 }
 
 .joystick-base {
-  width: 124px;
-  height: 124px;
+  width: 130px;
+  height: 130px;
   border-radius: 50%;
   background: #000000;
   position: relative;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Invisible 40px extended forgiving touch area */
+.joystick-base::before {
+  content: "";
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.joystick-base.active {
+  transform: scale(1.05);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), 0 0 0 1px #000000;
 }
 
 .joystick-knob {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: #000000;
   border: 3px solid #ffffff;
   box-shadow: 0 0 0 1px #000000;
   transform: translate(-50%, -50%);
   pointer-events: none;
+  transition: none;
+}
+
+/* Knob eases only when idle (springing back) — never during active drag */
+.joystick-knob.idle {
+  transition: transform 0.05s linear;
 }
 
 .controls {

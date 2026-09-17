@@ -294,11 +294,34 @@ canvas.addEventListener('touchmove', (e) => {
   e.preventDefault();
 }, { passive: false });
 
-// ---- BOTTOM JOYSTICK (touch devices only) ----
+// ---- BOTTOM JOYSTICK (analog, butter-smooth, 1:1 with player) ----
 const joystickBase = document.getElementById('joystickBase');
 const joystickKnob = document.getElementById('joystickKnob');
-const JOY_RADIUS = 38;
+const joystickZone = document.getElementById('joystick');
+const JOY_RADIUS = 52;
+const JOY_DEADZONE = 0.08;
+const JOY_CURVE = 1.4;
+const JOY_SMOOTH = 0.35;
+const JOY_KNOB_LERP = 0.55;
+const JOY_RELEASE_DECAY = 0.5;
+const JOY_EXTENDED = 40;
 let joyTouchId = null;
+let joyActive = false;
+let joyIsMouse = false;
+let joyOriginX = 0;
+let joyOriginY = 0;
+// Analog target (-1..1, length = magnitude 0..1) + knob target (px)
+let joyTargetX = 0;
+let joyTargetY = 0;
+let joyTargetDX = 0;
+let joyTargetDY = 0;
+// Rendered knob pos (lerped in loop for 60fps) + smoothed analog
+let joyKnobX = 0;
+let joyKnobY = 0;
+let smoothX = 0;
+let smoothY = 0;
+let joyMag = 0;
+let joyVibrated = false;
 
 function joySetKnob(dx, dy) {
   if (!joystickKnob) return;
@@ -306,68 +329,213 @@ function joySetKnob(dx, dy) {
     'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
 }
 
+function joySetActive(on) {
+  if (!joystickBase) return;
+  joystickBase.classList.toggle('active', !!on);
+  if (joystickKnob) joystickKnob.classList.toggle('idle', !on);
+}
+
+function joyPowerCurve(dist01) {
+  if (dist01 <= JOY_DEADZONE) return 0;
+  const t = (dist01 - JOY_DEADZONE) / (1 - JOY_DEADZONE);
+  return Math.pow(t, JOY_CURVE);
+}
+
+function joyBaseCenter() {
+  if (!joystickBase) return { x: 0, y: 0, radius: 65 };
+  const r = joystickBase.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, radius: r.width / 2 };
+}
+
 function joyReset() {
   joyTouchId = null;
-  touchDirection = null;
-  joySetKnob(0, 0);
+  joyActive = false;
+  joyIsMouse = false;
+  joyTargetX = 0;
+  joyTargetY = 0;
+  joyTargetDX = 0;
+  joyTargetDY = 0;
+  joyMag = 0;
+  joyVibrated = false;
+  // Targets go to 0 — smoothing + knob spring back in loop (fast decay).
+  // touchDirection clears once smoothing decays (see joyTick, no drift).
+  joySetActive(false);
+}
+
+function joyStart(clientX, clientY, id, isMouse) {
+  if (joyActive) return;
+  joyActive = true;
+  joyIsMouse = !!isMouse;
+  joyTouchId = id;
+  // Floating origin: landing point becomes center, clamped to base circle
+  // so taps anywhere in the 40px extended area grab without jumping.
+  const c = joyBaseCenter();
+  const ox = clientX - c.x;
+  const oy = clientY - c.y;
+  const olen = Math.hypot(ox, oy);
+  if (olen > c.radius) {
+    joyOriginX = c.x + (ox / (olen || 1)) * c.radius;
+    joyOriginY = c.y + (oy / (olen || 1)) * c.radius;
+  } else {
+    joyOriginX = clientX;
+    joyOriginY = clientY;
+  }
+  joyTargetX = 0;
+  joyTargetY = 0;
+  joyTargetDX = 0;
+  joyTargetDY = 0;
+  joyMag = 0;
+  joyVibrated = false;
+  joySetActive(true);
+}
+
+function joyCompute(clientX, clientY) {
+  let dx = clientX - joyOriginX;
+  let dy = clientY - joyOriginY;
+  const len = Math.hypot(dx, dy);
+  if (len > JOY_RADIUS) { dx = (dx / len) * JOY_RADIUS; dy = (dy / len) * JOY_RADIUS; }
+  const dist01 = Math.min(1, Math.hypot(dx, dy) / JOY_RADIUS);
+  // Dead zone 0.08 + smooth power curve 1.4 — no hard jump at edge, no drift.
+  const mag = joyPowerCurve(dist01);
+  if (mag <= 0 || Math.hypot(dx, dy) < 1) {
+    joyTargetX = 0;
+    joyTargetY = 0;
+    joyTargetDX = 0;
+    joyTargetDY = 0;
+    joyMag = 0;
+    touchDirection = null;
+    return;
+  }
+  const n = Math.hypot(dx, dy) || 1;
+  const dirX = dx / n;
+  const dirY = dy / n;
+  // Normalized direction + magnitude 0..1. Knob follows finger 1:1 (raw px),
+  // analog target carries the curved magnitude for precise low-speed control.
+  joyTargetDX = dx;
+  joyTargetDY = dy;
+  joyTargetX = dirX * mag;
+  joyTargetY = dirY * mag;
+  joyMag = mag;
+  touchDirection = { x: dirX, y: dirY, mag: mag, ax: joyTargetX, ay: joyTargetY };
+  // Haptic tick at max deflection only (once per push).
+  if (mag >= 0.98 && !joyVibrated) {
+    joyVibrated = true;
+    try {
+      if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(5);
+    } catch (e) { /* vibrate unavailable */ }
+  } else if (mag < 0.9) {
+    joyVibrated = false;
+  }
 }
 
 function joyHandle(e) {
-  if (!joystickBase) return;
+  if (!joyActive || !joystickBase) return;
   const touches = e.changedTouches || e.touches;
   if (!touches) return;
   let t = null;
   for (let i = 0; i < touches.length; i++) {
     if (touches[i].identifier === joyTouchId) { t = touches[i]; break; }
   }
-  if (!t && joyTouchId === null && touches.length > 0) t = touches[0];
   if (!t) return;
-  const r = joystickBase.getBoundingClientRect();
-  let dx = t.clientX - (r.left + r.width / 2);
-  let dy = t.clientY - (r.top + r.height / 2);
-  const len = Math.hypot(dx, dy);
-  if (len > JOY_RADIUS) { dx = (dx / len) * JOY_RADIUS; dy = (dy / len) * JOY_RADIUS; }
-  // Dead zone so the released stick never drifts.
-  if (Math.hypot(dx, dy) < 6) {
-    touchDirection = null;
-    joySetKnob(0, 0);
-    return;
-  }
-  const n = Math.hypot(dx, dy) || 1;
-  touchDirection = { x: dx / n, y: dy / n };
-  joySetKnob(dx, dy);
+  joyCompute(t.clientX, t.clientY);
 }
 
-if (joystickBase) {
-  joystickBase.addEventListener('touchstart', (e) => {
+// Per-frame: low-pass filter + 60fps knob lerp (frame-rate independent).
+function joyTick(dt) {
+  const dtN = Math.min(32, Math.max(0.1, dt)) / 16.666;
+  const k = 1 - Math.pow(1 - JOY_SMOOTH, dtN);
+  const kRel = 1 - Math.pow(1 - JOY_RELEASE_DECAY, dtN);
+  const kKnob = 1 - Math.pow(1 - JOY_KNOB_LERP, dtN);
+  const kf = joyActive ? k : kRel;
+  // Butter-smooth low-pass: small tilt stays precise, full tilt stays fast.
+  smoothX += (joyTargetX - smoothX) * kf;
+  smoothY += (joyTargetY - smoothY) * kf;
+  // Spring back with fast decay — snap exactly to 0 to kill drift.
+  if (!joyActive) {
+    if (Math.hypot(smoothX, smoothY) < 0.002) { smoothX = 0; smoothY = 0; }
+    if (Math.hypot(joyKnobX, joyKnobY) < 0.15 &&
+        Math.hypot(joyTargetDX, joyTargetDY) === 0) { joyKnobX = 0; joyKnobY = 0; }
+  }
+  // 60fps knob animation — follows finger with <16ms feel, no touchmove lag.
+  joyKnobX += (joyTargetDX - joyKnobX) * kKnob;
+  joyKnobY += (joyTargetDY - joyKnobY) * kKnob;
+  if (Math.hypot(joyKnobX - joyTargetDX, joyKnobY - joyTargetDY) < 0.05) {
+    joyKnobX = joyTargetDX;
+    joyKnobY = joyTargetDY;
+  }
+  joySetKnob(joyKnobX.toFixed(2), joyKnobY.toFixed(2));
+  // Mirror smoothed analog to the touchDirection global (no double-normalize
+  // downstream — vector length already IS the magnitude 0..1).
+  const sm = Math.hypot(smoothX, smoothY);
+  if (sm > 0.002) {
+    touchDirection = {
+      x: smoothX / sm,
+      y: smoothY / sm,
+      mag: Math.min(1, sm),
+      ax: smoothX,
+      ay: smoothY
+    };
+  } else if (!joyActive) {
+    touchDirection = null;
+    smoothX = 0;
+    smoothY = 0;
+  }
+}
+
+if (joystickZone || joystickBase) {
+  const zone = joystickZone || joystickBase;
+  zone.addEventListener('touchstart', (e) => {
     e.preventDefault();
     if (state === STATES.OVER) { restartGame(); return; }
     const touches = e.changedTouches || e.touches;
-    if (touches && touches.length > 0 && joyTouchId === null) {
-      joyTouchId = touches[0].identifier;
-    }
-    joyHandle(e);
+    if (!touches || touches.length === 0 || joyActive) return;
+    // Track first new touch id correctly for multi-touch (ignore extras).
+    const t = touches[0];
+    joyStart(t.clientX, t.clientY, t.identifier, false);
+    joyCompute(t.clientX, t.clientY);
   }, { passive: false });
 
-  joystickBase.addEventListener('touchmove', (e) => {
+  zone.addEventListener('touchmove', (e) => {
     e.preventDefault();
     joyHandle(e);
   }, { passive: false });
 
   const joyEnd = (e) => {
-    e.preventDefault();
-    const touches = e.changedTouches;
-    if (touches) {
+    if (e) e.preventDefault();
+    const touches = e && e.changedTouches;
+    if (touches && joyTouchId !== null) {
+      let ended = false;
       for (let i = 0; i < touches.length; i++) {
-        if (touches[i].identifier === joyTouchId) { joyReset(); return; }
+        if (touches[i].identifier === joyTouchId) { ended = true; break; }
       }
-      if (e.touches && e.touches.length === 0) joyReset();
-    } else {
-      joyReset();
+      if (!ended) {
+        if (e.touches && e.touches.length === 0) joyReset();
+        return;
+      }
     }
+    joyReset();
   };
-  joystickBase.addEventListener('touchend', joyEnd, { passive: false });
-  joystickBase.addEventListener('touchcancel', joyEnd, { passive: false });
+  zone.addEventListener('touchend', joyEnd, { passive: false });
+  zone.addEventListener('touchcancel', joyEnd, { passive: false });
+
+  // Mouse fallback for desktop testing (same analog path, no drift/jump).
+  zone.addEventListener('mousedown', (e) => {
+    if (joyActive) return;
+    if (state === STATES.OVER) { restartGame(); return; }
+    e.preventDefault();
+    joyStart(e.clientX, e.clientY, 'mouse', true);
+    joyCompute(e.clientX, e.clientY);
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!joyActive || !joyIsMouse) return;
+    e.preventDefault();
+    joyCompute(e.clientX, e.clientY);
+  }, { passive: false });
+  window.addEventListener('mouseup', (e) => {
+    if (!joyActive || !joyIsMouse) return;
+    joyReset();
+  });
+  if (joystickKnob) joystickKnob.classList.add('idle');
 }
 
 canvas.addEventListener('click', () => {
@@ -762,26 +930,46 @@ function updateParticles() {
 
 // ---- PLAYER PHYSICS ----
 function getInput() {
+  // Analog stick: smoothed vector already carries magnitude 0..1 —
+  // do NOT re-normalize (that would erase small-tilt precision).
+  const sMag = Math.hypot(smoothX, smoothY);
+  if (sMag > 0.002) {
+    return { x: smoothX, y: smoothY, mag: Math.min(1, sMag) };
+  }
+  if (touchDirection && typeof touchDirection.ax === 'number') {
+    const m = Math.hypot(touchDirection.ax, touchDirection.ay);
+    if (m > 0.002) return { x: touchDirection.ax, y: touchDirection.ay, mag: Math.min(1, m) };
+  }
   let ix = 0, iy = 0;
   if (keys['ArrowUp'] || keys['w'] || keys['W']) iy = -1;
   if (keys['ArrowDown'] || keys['s'] || keys['S']) iy = 1;
   if (keys['ArrowLeft'] || keys['a'] || keys['A']) ix = -1;
   if (keys['ArrowRight'] || keys['d'] || keys['D']) ix = 1;
-  if (touchDirection) {
-    ix = touchDirection.x;
-    iy = touchDirection.y;
-  }
+  // Keyboard only: normalize so diagonal speed == cardinal speed.
   const len = Math.hypot(ix, iy);
   if (len > 0) { ix /= len; iy /= len; }
-  return { x: ix, y: iy };
+  return { x: ix, y: iy, mag: len > 0 ? 1 : 0 };
 }
 
-function updatePlayer() {
+function updatePlayer(dt) {
   const input = getInput();
-  player.vx += input.x * physics.acceleration;
-  player.vy += input.y * physics.acceleration;
-  player.vx *= physics.friction;
-  player.vy *= physics.friction;
+  const dtN = (typeof dt === 'number' && dt > 0) ? Math.min(32, dt) / 16.666 : 1;
+  const iMag = Math.min(1, Math.hypot(input.x, input.y));
+  // Analog magnitude scales acceleration: 0.25 floor keeps tiny tilts alive,
+  // full tilt = full speed. Product with iMag keeps deadzone continuous.
+  const powerCurve = iMag;
+  const accelScale = 0.25 + 0.75 * powerCurve;
+  const acc = physics.acceleration * accelScale * dtN;
+  player.vx += input.x * acc;
+  player.vy += input.y * acc;
+  // Tight stop: extra friction on release so the circle halts with no slide.
+  const joyIdle = iMag <= 0.002;
+  const baseF = physics.friction;
+  const friction = joyIdle ? Math.pow(baseF, dtN) * Math.pow(0.96, dtN) : Math.pow(baseF, dtN);
+  player.vx *= friction;
+  player.vy *= friction;
+  // Kill sub-pixel drift.
+  if (joyIdle && Math.hypot(player.vx, player.vy) < 0.02) { player.vx = 0; player.vy = 0; }
 
   const spd = Math.hypot(player.vx, player.vy);
   if (spd > physics.maxVelocity) {
@@ -1032,10 +1220,14 @@ function loop(timestamp) {
   const dt = Math.min(timestamp - lastTime, 32);
   lastTime = timestamp;
 
+  // 60fps knob animation + analog smoothing runs every frame (even on
+  // game-over screen so the stick always springs back with no drift).
+  try { joyTick(dt); } catch (e) { /* joystick not ready */ }
+
   if (state === STATES.PLAYING) {
     elapsedTime += dt / 1000;
     updateDifficulty();
-    updatePlayer();
+    updatePlayer(dt);
     checkObstacleCollision();
     if (state === STATES.PLAYING) {
       checkTargetCollision();
