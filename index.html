@@ -3,37 +3,69 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SLIPPERY</title>
+  <title>ZEVLI</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
     <div class="header-inner">
-      <span class="logo">SLIPPERY</span>
+      <span class="logo">ZEVLI</span>
       <a href="#" class="btn-play">PLAY</a>
     </div>
   </header>
 
   <main>
+    <div class="speed-select" id="speedSelect">
+      <span class="select-label">SPEED</span>
+      <button type="button" data-speed="low">LOW</button>
+      <button type="button" data-speed="medium" class="active">MEDIUM</button>
+      <button type="button" data-speed="high">HIGH</button>
+      <button type="button" data-speed="extreme">EXTREME</button>
+    </div>
+    <div class="difficulty-select" id="difficultySelect">
+      <span class="select-label">BOXES</span>
+      <button type="button" data-difficulty="easy">EASY</button>
+      <button type="button" data-difficulty="medium" class="active">MEDIUM</button>
+      <button type="button" data-difficulty="high">HIGH</button>
+      <button type="button" data-difficulty="extreme">EXTREME</button>
+    </div>
     <div class="game-wrapper">
       <canvas id="gameCanvas"></canvas>
       <div class="hud">
         <span class="hud-score">SCORE 0</span>
         <span class="hud-time">TIME 0.0</span>
+        <span id="hudBest">BEST 0</span>
       </div>
       <div class="game-over-screen" id="gameOverScreen">
-        <div class="game-over-title">SLIPPED.</div>
+        <div class="game-over-title">ZEVLI.</div>
+        <div id="newBestBadge" class="new-best-badge">NEW BEST!</div>
         <div class="game-over-score" id="goScore">SCORE 0</div>
         <div class="game-over-time" id="goTime">TIME 0.0</div>
-        <div class="game-over-restart">PRESS SPACE TO TRY AGAIN</div>
+        <div class="game-over-best" id="goBest">BEST SCORE 0 / BEST TIME 0.0</div>
+        <div class="game-over-history-wrap">
+          <div class="game-over-history-title">LAST 5 RUNS</div>
+          <ul class="game-over-history" id="goHistory"></ul>
+        </div>
+        <div class="game-over-restart" id="goRestart">PRESS SPACE TO START</div>
       </div>
+    </div>
+    <div class="controls">
+      <span class="controls-desktop">WASD / ARROWS — MOVE</span>
+      <span class="controls-desktop">CATCH RINGS — <strong class="warn">DO NOT TOUCH BLACK BOXES</strong></span>
+      <span class="controls-desktop">SPACE — RESTART</span>
+      <span class="controls-mobile howto-title">HOW TO PLAY</span>
+      <span class="controls-mobile">DRAG TO MOVE — CATCH RINGS FOR +10 PTS</span>
+      <span class="controls-mobile warn">DO NOT TOUCH BLACK BOXES — ONE HIT ENDS THE RUN</span>
+      <span class="controls-mobile">TAP THE GAME TO RESTART</span>
     </div>
   </main>
 
-  <p class="tagline">SLIPPERY<br>*A tiny physics game.*</p>
-
   <footer>
-    <span>SLIPPERY — A tiny browser game</span>
+    <div class="footer-inner">
+      <span>ZEVLI</span>
+      <span id="footerBest">BEST: 0</span>
+      <span>10 PTS PER TARGET</span>
+    </div>
   </footer>
 
   <script src="script.js"></script>
