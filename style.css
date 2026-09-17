@@ -145,6 +145,42 @@ header {
   white-space: nowrap;
 }
 
+/* Bottom joystick: touch devices only, black on white */
+.joystick {
+  display: none;
+  justify-content: center;
+  padding: 10px 0 2px;
+}
+
+body.is-touch .joystick {
+  display: flex;
+}
+
+.joystick-base {
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
+  background: #000000;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #000000;
+  border: 3px solid #ffffff;
+  box-shadow: 0 0 0 1px #000000;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 .controls {
   max-width: 800px;
   margin: 0 auto;
@@ -182,6 +218,8 @@ body.is-touch .controls-mobile {
   display: inline;
 }
 
+
+
 body.is-touch .controls {
   flex-direction: column;
   align-items: center;
@@ -190,6 +228,10 @@ body.is-touch .controls {
 }
 
 @media (hover: none) and (pointer: coarse) {
+  .joystick {
+    display: flex;
+  }
+
   .controls-desktop {
     display: none;
   }

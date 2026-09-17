@@ -284,47 +284,90 @@ document.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keyup', (e) => { keys[e.key] = false; });
 
+// Canvas taps only restart — steering lives on the bottom joystick.
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
-  handleTouch(e);
-  if (state === STATES.OVER) { restartGame(); return; }
+  if (state === STATES.OVER) restartGame();
 }, { passive: false });
 
 canvas.addEventListener('touchmove', (e) => {
   e.preventDefault();
-  handleTouch(e);
 }, { passive: false });
 
-canvas.addEventListener('touchend', (e) => {
-  e.preventDefault();
+// ---- BOTTOM JOYSTICK (touch devices only) ----
+const joystickBase = document.getElementById('joystickBase');
+const joystickKnob = document.getElementById('joystickKnob');
+const JOY_RADIUS = 38;
+let joyTouchId = null;
+
+function joySetKnob(dx, dy) {
+  if (!joystickKnob) return;
+  joystickKnob.style.transform =
+    'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
+}
+
+function joyReset() {
+  joyTouchId = null;
   touchDirection = null;
-  touchActive = false;
-}, { passive: false });
+  joySetKnob(0, 0);
+}
 
-canvas.addEventListener('touchcancel', (e) => {
-  e.preventDefault();
-  touchDirection = null;
-  touchActive = false;
-}, { passive: false });
-
-let touchActive = false;
-
-function handleTouch(e) {
-  const touch = e.touches && e.touches[0];
-  if (!touch) {
+function joyHandle(e) {
+  if (!joystickBase) return;
+  const touches = e.changedTouches || e.touches;
+  if (!touches) return;
+  let t = null;
+  for (let i = 0; i < touches.length; i++) {
+    if (touches[i].identifier === joyTouchId) { t = touches[i]; break; }
+  }
+  if (!t && joyTouchId === null && touches.length > 0) t = touches[0];
+  if (!t) return;
+  const r = joystickBase.getBoundingClientRect();
+  let dx = t.clientX - (r.left + r.width / 2);
+  let dy = t.clientY - (r.top + r.height / 2);
+  const len = Math.hypot(dx, dy);
+  if (len > JOY_RADIUS) { dx = (dx / len) * JOY_RADIUS; dy = (dy / len) * JOY_RADIUS; }
+  // Dead zone so the released stick never drifts.
+  if (Math.hypot(dx, dy) < 6) {
     touchDirection = null;
-    touchActive = false;
+    joySetKnob(0, 0);
     return;
   }
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = logicalW / Math.max(1, rect.width);
-  const scaleY = logicalH / Math.max(1, rect.height);
-  const tx = (touch.clientX - rect.left) * scaleX;
-  const ty = (touch.clientY - rect.top) * scaleY;
-  touchDirection = { x: tx - logicalW / 2, y: ty - logicalH / 2 };
-  const len = Math.hypot(touchDirection.x, touchDirection.y);
-  if (len > 0) { touchDirection.x /= len; touchDirection.y /= len; }
-  touchActive = true;
+  const n = Math.hypot(dx, dy) || 1;
+  touchDirection = { x: dx / n, y: dy / n };
+  joySetKnob(dx, dy);
+}
+
+if (joystickBase) {
+  joystickBase.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (state === STATES.OVER) { restartGame(); return; }
+    const touches = e.changedTouches || e.touches;
+    if (touches && touches.length > 0 && joyTouchId === null) {
+      joyTouchId = touches[0].identifier;
+    }
+    joyHandle(e);
+  }, { passive: false });
+
+  joystickBase.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    joyHandle(e);
+  }, { passive: false });
+
+  const joyEnd = (e) => {
+    e.preventDefault();
+    const touches = e.changedTouches;
+    if (touches) {
+      for (let i = 0; i < touches.length; i++) {
+        if (touches[i].identifier === joyTouchId) { joyReset(); return; }
+      }
+      if (e.touches && e.touches.length === 0) joyReset();
+    } else {
+      joyReset();
+    }
+  };
+  joystickBase.addEventListener('touchend', joyEnd, { passive: false });
+  joystickBase.addEventListener('touchcancel', joyEnd, { passive: false });
 }
 
 canvas.addEventListener('click', () => {
@@ -408,8 +451,8 @@ function syncArenaToCanvas() {
 function resizeCanvas() {
   const wrapper = canvas.parentElement;
   const wrapperW = wrapper.clientWidth - 48;
-  // Fit height too so mobile needs no scroll: reserve header + 2 pill rows + hints + footer
-  const reserved = isTouchDevice ? 330 : 290;
+  // Fit height too so mobile needs no scroll: reserve header + 2 pill rows + joystick + hints + footer
+  const reserved = isTouchDevice ? 480 : 290;
   const availH = window.innerHeight - reserved;
   const maxSize = Math.min(800, wrapperW, availH);
   canvasSize = Math.max(200, maxSize);
@@ -970,23 +1013,7 @@ function render() {
     ctx.fill();
   }
 
-  if (touchActive && touchDirection) {
-    const angle = Math.atan2(touchDirection.y, touchDirection.x);
-    const dist = 30;
-    const tx = logicalW / 2 + Math.cos(angle) * dist;
-    const ty = logicalH / 2 + Math.sin(angle) * dist;
-    ctx.beginPath();
-    ctx.arc(tx, ty, 8, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(logicalW / 2, logicalH / 2);
-    ctx.lineTo(tx, ty);
-    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
+  // (In-canvas touch crosshair removed — steering is on the bottom joystick.)
 }
 
 // ---- HUD ----
