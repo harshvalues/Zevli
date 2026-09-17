@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://zevligames.vercel.app/sitemap.xml
